@@ -1,0 +1,20 @@
+# IDE
+.idea/
+*.iml
+.vscode/
+
+# Java / Maven
+backend/target/
+*.class
+*.jar
+!.mvn/wrapper/maven-wrapper.jar
+
+# Локальные секреты и окружение
+.env
+.env.*
+!.env.example
+
+# Логи и ОС
+*.log
+.DS_Store
+Thumbs.db

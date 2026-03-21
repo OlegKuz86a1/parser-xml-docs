@@ -1,0 +1,35 @@
+server:
+  port: 8080
+  servlet:
+    context-path: /api/v1
+
+spring:
+  application:
+    name: artwell-api
+  datasource:
+    url: ${SPRING_DATASOURCE_URL:jdbc:postgresql://localhost:5432/artwell}
+    username: ${SPRING_DATASOURCE_USERNAME:artwell}
+    password: ${SPRING_DATASOURCE_PASSWORD:artwell123}
+    driver-class-name: org.postgresql.Driver
+  jpa:
+    hibernate:
+      ddl-auto: update
+    open-in-view: false
+    properties:
+      hibernate:
+        dialect: org.hibernate.dialect.PostgreSQLDialect
+        jdbc:
+          time_zone: UTC
+
+springdoc:
+  api-docs:
+    path: /openapi
+  swagger-ui:
+    path: /swagger-ui.html
+
+artwell:
+  security:
+    dev-permit-all: true
+  xsd:
+    # Привязка типа документа к XSD в classpath (расширять по мере подключения схем Минстроя)
+    schema-map: {}
