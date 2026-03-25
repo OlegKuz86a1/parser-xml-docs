@@ -1,13 +1,9 @@
 package com.artwell.web;
 
 import com.artwell.api.dto.DocumentDetail;
-import com.artwell.api.dto.AuditEntry;
 import com.artwell.api.dto.DocumentVersion;
 import com.artwell.api.dto.PageDocumentSummary;
 import com.artwell.api.dto.UploadResult;
-import com.artwell.api.enums.DocumentTypeCode;
-import com.artwell.api.enums.ValidationStatus;
-import com.artwell.api.enums.VersionUploadMode;
 import com.artwell.service.ActingUserService;
 import com.artwell.service.DocumentService;
 import lombok.RequiredArgsConstructor;
@@ -28,6 +24,9 @@ import org.springframework.web.multipart.MultipartFile;
 import java.util.List;
 import java.util.UUID;
 
+/**
+ * REST по контракту {@code artwell-api-openapi-3.0.yaml}: только {@code /documents} и вложенные пути.
+ */
 @RestController
 @RequestMapping("/documents")
 @RequiredArgsConstructor
@@ -39,14 +38,10 @@ public class DocumentController {
     @GetMapping
     public PageDocumentSummary list(
             @RequestParam(defaultValue = "0") int page,
-            @RequestParam(defaultValue = "20") int size,
-            @RequestParam(required = false) ValidationStatus status,
-            @RequestParam(required = false) DocumentTypeCode documentType,
-            @RequestParam(required = false) UUID constructionObjectId,
-            @RequestParam(required = false) String documentNumber
+            @RequestParam(defaultValue = "20") int size
     ) {
-        Pageable p = PageRequest.of(page, size);
-        return documentService.listDocuments(status, documentType, constructionObjectId, documentNumber, p);
+        Pageable p = PageRequest.of(page, Math.min(Math.max(size, 1), 200));
+        return documentService.listDocuments(p);
     }
 
     @GetMapping("/{documentId}")
@@ -67,13 +62,11 @@ public class DocumentController {
     public ResponseEntity<UploadResult> upload(
             @RequestParam("file") MultipartFile file,
             @RequestParam(required = false) String documentNumber,
-            @RequestParam(required = false) VersionUploadMode versionMode,
             @RequestParam(required = false) UUID constructionObjectId
     ) {
         UploadResult result = documentService.upload(
                 file,
                 documentNumber,
-                versionMode,
                 constructionObjectId,
                 actingUserService.requireUserId()
         );
@@ -83,22 +76,5 @@ public class DocumentController {
     @GetMapping("/{documentId}/versions")
     public List<DocumentVersion> versions(@PathVariable UUID documentId) {
         return documentService.listVersions(documentId);
-    }
-
-    @GetMapping("/{documentId}/versions/{versionId}/xml")
-    public ResponseEntity<byte[]> versionXml(
-            @PathVariable UUID documentId,
-            @PathVariable UUID versionId
-    ) {
-        byte[] xml = documentService.getVersionXml(documentId, versionId);
-        return ResponseEntity.ok()
-                .contentType(MediaType.APPLICATION_XML)
-                .header(HttpHeaders.CONTENT_DISPOSITION, "attachment; filename=\"document-v.xml\"")
-                .body(xml);
-    }
-
-    @GetMapping("/{documentId}/events")
-    public List<AuditEntry> events(@PathVariable UUID documentId) {
-        return documentService.listEvents(documentId);
     }
 }

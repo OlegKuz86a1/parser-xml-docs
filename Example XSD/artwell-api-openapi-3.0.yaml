@@ -2,18 +2,13 @@ openapi: 3.0.3
 info:
   title: Артвелл — API исполнительной документации (XML / XSD)
   description: |
-    **API-first контракт** для бэкенда на Java Spring Boot по требованиям «Описание задачи от Артвелл».
+    **Минимальный набор операций под ТЗ:**
+    1. **Загрузка и валидация** — `POST /documents/upload` (multipart), результат в теле: валидность (`validation.status`) и сообщения XSD (`validation.messages`); при ошибке — `400` с описанием.
+    2. **Парсинг и сохранение** — в ответе `201` — извлечённые поля в `document` (номер, дата, объект, участники и пр.).
+    3. **Просмотр** — `GET /documents` (список), `GET /documents/{documentId}` (карточка), `GET /documents/{documentId}/xml` (оригинальный XML текущей версии).
+    4. **Версионность** — повторная загрузка с тем же номером документа создаёт новую версию через тот же `POST /documents/upload`; история — `GET /documents/{documentId}/versions`.
 
-    Покрывает MVP: загрузка XML, валидация по XSD Минстроя, извлечение ключевых полей,
-    хранение метаданных и файла в PostgreSQL, список/карточка, скачивание XML,
-    версионность (повтор по номеру документа), **история событий по документу**
-    (вкладка «История» в карточке; отдельного глобального аудит-лога в UI нет),
-    ролевая модель (подрядчик / заказчик / администратор).
-
-    Расширения из ТЗ: режим новой версии vs обновление без новой версии (см. `VersionUploadMode`),
-    разграничение по типам документов (`documentType` + права).
-
-    Генерация клиента/сервера: `openapi-generator` или `springdoc-openapi` + ручная доработка DTO.
+    Аутентификация и прочее вне этого файла.
   version: 1.0.0
   contact:
     name: Артвелл
@@ -29,93 +24,20 @@ servers:
         default: api.example.com
 
 tags:
-  - name: auth
-    description: Аутентификация (JWT)
   - name: documents
-    description: Документы XML — загрузка, список, карточка, скачивание, история событий по документу
-  - name: versions
-    description: Версии XML-файла документа (отдельно от журнала событий)
-  - name: validation
-    description: Проверка XML по XSD (в т.ч. без сохранения)
-  - name: statistics
-    description: Сводная статистика по документам (для интеграций и отчётов; в веб-UI отдельной панели нет)
-  - name: reference
-    description: Справочники (типы документов Минстроя, объекты)
-  - name: users
-    description: Текущий пользователь и права
+    description: Документы XML — ТЗ (загрузка, список, карточка, XML, версии)
 
 security:
   - bearerAuth: []
 
 paths:
-  /auth/login:
-    post:
-      tags: [auth]
-      summary: Вход, получение JWT
-      security: []
-      requestBody:
-        required: true
-        content:
-          application/json:
-            schema:
-              $ref: '#/components/schemas/LoginRequest'
-      responses:
-        '200':
-          description: Успех
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/LoginResponse'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /auth/logout:
-    post:
-      tags: [auth]
-      summary: Выход (инвалидация токена на стороне клиента; опционально blacklist на сервере)
-      responses:
-        '204':
-          description: Успех без тела
-
-  /users/me:
-    get:
-      tags: [users]
-      summary: Текущий пользователь, роль, доступные типы документов и объекты
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/CurrentUser'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
   /documents:
     get:
       tags: [documents]
-      summary: Список документов с фильтрами и пагинацией
+      summary: Список документов (пагинация)
       parameters:
         - $ref: '#/components/parameters/PageParam'
         - $ref: '#/components/parameters/SizeParam'
-        - name: status
-          in: query
-          schema:
-            $ref: '#/components/schemas/ValidationStatus'
-        - name: documentType
-          in: query
-          schema:
-            $ref: '#/components/schemas/DocumentTypeCode'
-        - name: constructionObjectId
-          in: query
-          schema:
-            type: string
-            format: uuid
-        - name: documentNumber
-          in: query
-          description: Поиск по номеру документа (частичное совпадение — на усмотрение реализации)
-          schema:
-            type: string
       responses:
         '200':
           description: Страница документов
@@ -129,7 +51,7 @@ paths:
   /documents/{documentId}:
     get:
       tags: [documents]
-      summary: Карточка документа (метаданные + ссылка на текущую версию)
+      summary: Карточка документа
       parameters:
         - $ref: '#/components/parameters/DocumentId'
       responses:
@@ -147,7 +69,7 @@ paths:
   /documents/{documentId}/xml:
     get:
       tags: [documents]
-      summary: Скачать оригинальный XML текущей актуальной версии
+      summary: Скачать оригинальный XML (текущая актуальная версия)
       parameters:
         - $ref: '#/components/parameters/DocumentId'
       responses:
@@ -166,24 +88,19 @@ paths:
   /documents/upload:
     post:
       tags: [documents]
-      summary: Загрузка XML; валидация XSD; парсинг; сохранение файла и метаданных; аудит
+      summary: Загрузка XML — валидация XSD, парсинг, сохранение в БД и файла; новая версия при том же номере документа
       description: |
-        Повторная загрузка с тем же **логическим номером документа** (из XML или из `documentNumber`):
-        по умолчанию создаётся **новая версия** (`versionMode=NEW_VERSION`).
-        Режим `ATTACH_AS_VERSION_WITHOUT_BUMP` — сценарий из ТЗ «обновить без новой версии» с прикреплением файла как версии исходного (уточнить бизнес-правило при реализации).
+        Номер документа из XML или параметр `documentNumber`. Новый номер — первый документ и версия 1; совпадение — следующая версия.
       parameters:
         - name: documentNumber
           in: query
           required: false
-          description: Явный номер документа, если извлечение из XML невозможно
+          description: Если номер нельзя извлечь из XML
           schema:
             type: string
-        - name: versionMode
-          in: query
-          schema:
-            $ref: '#/components/schemas/VersionUploadMode'
         - name: constructionObjectId
           in: query
+          required: false
           schema:
             type: string
             format: uuid
@@ -199,16 +116,16 @@ paths:
                 file:
                   type: string
                   format: binary
-                  description: XML-файл (исполнительная документация Минстроя)
+                  description: XML-файл
       responses:
         '201':
-          description: Документ создан или добавлена версия
+          description: Документ сохранён; `validation.status` — VALID (предупреждения XSD перечислены в `validation.messages`); при INVALID загрузка не выполняется — см. `400`
           content:
             application/json:
               schema:
                 $ref: '#/components/schemas/UploadResult'
         '400':
-          description: Ошибка валидации XSD или бизнес-правил
+          description: Ошибка валидации XSD (невалидный документ) или запроса; текст проблемы — `message` / `details`
           content:
             application/json:
               schema:
@@ -220,13 +137,13 @@ paths:
 
   /documents/{documentId}/versions:
     get:
-      tags: [versions]
-      summary: История версий документа
+      tags: [documents]
+      summary: История версий документа (от новой к старой)
       parameters:
         - $ref: '#/components/parameters/DocumentId'
       responses:
         '200':
-          description: Список версий от новой к старой
+          description: Список версий
           content:
             application/json:
               schema:
@@ -235,125 +152,6 @@ paths:
                   $ref: '#/components/schemas/DocumentVersion'
         '404':
           $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /documents/{documentId}/versions/{versionId}/xml:
-    get:
-      tags: [versions]
-      summary: Скачать XML конкретной версии
-      parameters:
-        - $ref: '#/components/parameters/DocumentId'
-        - name: versionId
-          in: path
-          required: true
-          schema:
-            type: string
-            format: uuid
-      responses:
-        '200':
-          description: XML
-          content:
-            application/xml:
-              schema:
-                type: string
-                format: binary
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /validation/validate:
-    post:
-      tags: [validation]
-      summary: Проверка XML по XSD без сохранения (dry-run)
-      requestBody:
-        required: true
-        content:
-          multipart/form-data:
-            schema:
-              type: object
-              required:
-                - file
-              properties:
-                file:
-                  type: string
-                  format: binary
-      responses:
-        '200':
-          description: Результат проверки
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/ValidationResult'
-        '400':
-          $ref: '#/components/responses/BadRequest'
-
-  /documents/{documentId}/events:
-    get:
-      tags: [documents]
-      summary: История событий по документу
-      description: |
-        События по одному документу (загрузка, просмотр, изменение и т.д.) для вкладки «История»
-        в карточке документа. Глобальный список аудита в интерфейсе не предусмотрен.
-      parameters:
-        - $ref: '#/components/parameters/DocumentId'
-      responses:
-        '200':
-          description: Список событий от новых к старым
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/AuditEntry'
-        '404':
-          $ref: '#/components/responses/NotFound'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /statistics:
-    get:
-      tags: [statistics]
-      summary: Агрегаты по документам и объектам (кол-во документов, валидных, ошибок, на проверке, объекты)
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                $ref: '#/components/schemas/DashboardStatistics'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
-
-  /reference/document-types:
-    get:
-      tags: [reference]
-      summary: Поддерживаемые типы документов (коды Минстроя / внутренние)
-      security: []
-      responses:
-        '200':
-          description: Справочник
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/DocumentTypeInfo'
-
-  /reference/construction-objects:
-    get:
-      tags: [reference]
-      summary: Объекты строительства, доступные текущему пользователю
-      responses:
-        '200':
-          description: OK
-          content:
-            application/json:
-              schema:
-                type: array
-                items:
-                  $ref: '#/components/schemas/ConstructionObject'
         '401':
           $ref: '#/components/responses/Unauthorized'
 
@@ -396,7 +194,7 @@ components:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
     Forbidden:
-      description: Нет прав (роль / тип документа / объект)
+      description: Нет прав
       content:
         application/json:
           schema:
@@ -407,111 +205,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/ErrorResponse'
-    BadRequest:
-      description: Некорректный запрос
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
 
   schemas:
-    LoginRequest:
-      type: object
-      required: [username, password]
-      properties:
-        username:
-          type: string
-        password:
-          type: string
-          format: password
-
-    LoginResponse:
-      type: object
-      required: [accessToken, tokenType, expiresIn, role]
-      properties:
-        accessToken:
-          type: string
-        tokenType:
-          type: string
-          example: Bearer
-        expiresIn:
-          type: integer
-          description: Секунды до истечения
-        role:
-          $ref: '#/components/schemas/UserRole'
-        userId:
-          type: string
-          format: uuid
-        displayName:
-          type: string
-
-    UserRole:
-      type: string
-      enum: [CONTRACTOR, CUSTOMER, ADMIN]
-      description: Подрядчик, Заказчик, Администратор
-
-    CurrentUser:
-      type: object
-      properties:
-        userId:
-          type: string
-          format: uuid
-        displayName:
-          type: string
-        role:
-          $ref: '#/components/schemas/UserRole'
-        allowedDocumentTypes:
-          type: array
-          items:
-            $ref: '#/components/schemas/DocumentTypeCode'
-        constructionObjectIds:
-          type: array
-          items:
-            type: string
-            format: uuid
-
     ValidationStatus:
       type: string
-      enum: [VALID, INVALID, PENDING]
-
-    DocumentTypeCode:
-      type: string
-      description: |
-        Код типа документа. Рекомендуется перечисление по минимальному перечню ТЗ
-        (акты, журналы, строительный контроль) — маппинг на XSD в сервисе.
-      example: AXIS_LAYOUT_ACT
-      enum:
-        - AXIS_LAYOUT_ACT
-        - ENGINEERING_NETWORKS_ACT
-        - HIDDEN_WORKS_ACT
-        - STRUCTURES_ACT
-        - GEODESY_BASE_ACT
-        - EQUIPMENT_DEFECTS_ACT
-        - HYDROPNEUMATIC_TEST_ACT
-        - FIRE_WATER_TEST_ACT
-        - INCOMING_CONTROL_ACT
-        - CONCRETE_JOURNAL
-        - AUTHOR_SUPERVISION_JOURNAL
-        - GENERAL_WORK_LOG
-        - MATERIALS_INCOMING_JOURNAL
-        - INSPECTION_PROTOCOL
-        - SUPERVISION_ACT_NO_CONTACT
-        - EXTENSION_DECISION
-        - DESKTOP_INSPECTION_ACT
-        - FIELD_INSPECTION_ACT
-        - VIOLATION_ORDER
-        - VIOLATION_REMEDIATION_NOTICE
-        - SUPERVISION_DECISION
-        - OTHER
-
-    VersionUploadMode:
-      type: string
-      enum:
-        - NEW_VERSION
-        - ATTACH_AS_VERSION_WITHOUT_BUMP
-      description: |
-        NEW_VERSION — новая версия при том же номере документа.
-        ATTACH_AS_VERSION_WITHOUT_BUMP — сценарий ТЗ «без создания новой версии» с прикреплением файла (уточнить правила хранения).
+      enum: [VALID, INVALID]
+      description: VALID — валидный документ (предупреждения — в `ValidationResult.messages`); INVALID — ошибка валидации
 
     DocumentSummary:
       type: object
@@ -522,10 +221,10 @@ components:
         documentNumber:
           type: string
         documentType:
-          $ref: '#/components/schemas/DocumentTypeCode'
+          type: string
+          description: Код типа документа (маппинг на XSD Минстроя)
         title:
           type: string
-          description: Человекочитаемое название типа / краткое описание
         constructionObjectName:
           type: string
         constructionObjectId:
@@ -560,6 +259,7 @@ components:
 
     Participant:
       type: object
+      description: Участник (ключевое поле по ТЗ)
       properties:
         name:
           type: string
@@ -580,7 +280,7 @@ components:
             extractedMetadata:
               type: object
               additionalProperties: true
-              description: Прочие извлечённые поля (объёмы, суммы и т.д.) — структура на усмотрение доменной модели
+              description: Прочие извлечённые поля
             createdAt:
               type: string
               format: date-time
@@ -627,6 +327,7 @@ components:
 
     ValidationResult:
       type: object
+      description: Результат проверки XSD для отображения пользователю
       properties:
         status:
           $ref: '#/components/schemas/ValidationStatus'
@@ -649,82 +350,6 @@ components:
         document:
           $ref: '#/components/schemas/DocumentDetail'
 
-    AuditEventType:
-      type: string
-      enum:
-        - UPLOAD
-        - VIEW
-        - UPDATE
-        - DELETE
-        - VALIDATION_FAILED
-        - LOGIN
-
-    AuditEntry:
-      description: Запись события по документу (используется в ответе `GET /documents/{documentId}/events`)
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        occurredAt:
-          type: string
-          format: date-time
-        eventType:
-          $ref: '#/components/schemas/AuditEventType'
-        userId:
-          type: string
-          format: uuid
-        userDisplayName:
-          type: string
-        documentId:
-          type: string
-          format: uuid
-        documentNumber:
-          type: string
-        details:
-          type: string
-        payloadJson:
-          type: object
-          additionalProperties: true
-          description: Сохраняемые/изменяемые данные (фрагмент) — для расширенных требований ТЗ
-
-    DashboardStatistics:
-      description: Сводные показатели (в т.ч. для `GET /statistics`); не привязаны к отдельному экрану в UI
-      type: object
-      properties:
-        totalDocuments:
-          type: integer
-        validDocuments:
-          type: integer
-        invalidDocuments:
-          type: integer
-        pendingDocuments:
-          type: integer
-        constructionObjectsCount:
-          type: integer
-
-    DocumentTypeInfo:
-      type: object
-      properties:
-        code:
-          $ref: '#/components/schemas/DocumentTypeCode'
-        titleRu:
-          type: string
-        minstroySchemaUrl:
-          type: string
-          format: uri
-
-    ConstructionObject:
-      type: object
-      properties:
-        id:
-          type: string
-          format: uuid
-        name:
-          type: string
-        address:
-          type: string
-
     ErrorResponse:
       type: object
       properties:
@@ -732,7 +357,9 @@ components:
           type: string
         message:
           type: string
+          description: Краткий текст ошибки (в т.ч. «ошибка валидации»)
         details:
           type: array
           items:
             type: string
+          description: Описание проблемы, детали XSD

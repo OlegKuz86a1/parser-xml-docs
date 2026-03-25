@@ -1,6 +1,6 @@
 # Артвелл API (скелет Spring Boot 3)
 
-Соответствует `Example XSD/artwell-api-openapi-3.0.yaml`: контроллеры, DTO, JPA-сущности PostgreSQL, заглушки бизнес-логики, частичная XSD-валидация (см. `artwell.xsd.schema-map`).
+Публичный REST по документам совпадает с `Example XSD/artwell-api-openapi-3.0.yaml` (`GET/POST /documents/...`). Отдельно: `/auth/login` (вне YAML), для фронта в `frontend/js/api.js`. JPA PostgreSQL, XSD-валидация (см. `artwell.xsd.schema-map`).
 
 ## Требования
 

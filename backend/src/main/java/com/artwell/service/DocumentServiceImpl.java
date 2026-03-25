@@ -6,9 +6,7 @@ import com.artwell.api.dto.PageDocumentSummary;
 import com.artwell.api.dto.UploadResult;
 import com.artwell.api.dto.ValidationResult;
 import com.artwell.api.enums.AuditEventType;
-import com.artwell.api.enums.DocumentTypeCode;
 import com.artwell.api.enums.ValidationStatus;
-import com.artwell.api.enums.VersionUploadMode;
 import com.artwell.domain.entity.ConstructionDocument;
 import com.artwell.domain.entity.DocumentEventEntity;
 import com.artwell.domain.entity.DocumentVersionEntity;
@@ -47,20 +45,8 @@ public class DocumentServiceImpl implements DocumentService {
 
     @Override
     @Transactional(readOnly = true)
-    public PageDocumentSummary listDocuments(
-            ValidationStatus status,
-            DocumentTypeCode documentType,
-            UUID constructionObjectId,
-            String documentNumber,
-            Pageable pageable
-    ) {
-        Page<ConstructionDocument> page = documentRepository.search(
-                status,
-                documentType,
-                constructionObjectId,
-                documentNumber,
-                pageable
-        );
+    public PageDocumentSummary listDocuments(Pageable pageable) {
+        Page<ConstructionDocument> page = documentRepository.findAll(pageable);
         return new PageDocumentSummary(
                 page.getContent().stream().map(documentMapper::toSummary).toList(),
                 page.getTotalElements(),
@@ -95,7 +81,6 @@ public class DocumentServiceImpl implements DocumentService {
     public UploadResult upload(
             MultipartFile file,
             String documentNumberQuery,
-            VersionUploadMode versionMode,
             UUID constructionObjectId,
             UUID actingUserId
     ) {
@@ -120,9 +105,7 @@ public class DocumentServiceImpl implements DocumentService {
             throw new ValidationFailedException(xsdResult);
         }
 
-        ValidationStatus docStatus = xsdResult.messages().stream().anyMatch(m -> "WARNING".equals(m.severity()))
-                ? ValidationStatus.PENDING
-                : ValidationStatus.VALID;
+        ValidationStatus docStatus = ValidationStatus.VALID;
 
         String number = extracted.documentNumber();
         ConstructionDocument document = documentRepository.findByDocumentNumber(number).orElse(null);
@@ -147,12 +130,7 @@ public class DocumentServiceImpl implements DocumentService {
             document = documentRepository.save(document);
             nextVersion = 1;
         } else {
-            if (versionMode == VersionUploadMode.NEW_VERSION || versionMode == null) {
-                nextVersion = document.getCurrentVersionNumber() + 1;
-            } else {
-                // ATTACH_AS_VERSION_WITHOUT_BUMP — скелет: всё равно увеличиваем номер файла-версии, уточните бизнес-правило
-                nextVersion = document.getCurrentVersionNumber() + 1;
-            }
+            nextVersion = document.getCurrentVersionNumber() + 1;
             document.setCurrentVersionNumber(nextVersion);
             document.setStatus(docStatus);
             document.setUpdatedAt(now);
@@ -196,55 +174,4 @@ public class DocumentServiceImpl implements DocumentService {
                 .toList();
     }
 
-    @Override
-    @Transactional(readOnly = true)
-    public byte[] getVersionXml(UUID documentId, UUID versionId) {
-        DocumentVersionEntity v = versionRepository.findByIdAndDocument_Id(versionId, documentId)
-                .orElseThrow(() -> new NotFoundException("version", versionId));
-        return v.getXmlContent();
-    }
-
-    @Override
-    @Transactional(readOnly = true)
-    public List<AuditEntry> listEvents(UUID documentId) {
-        if (!documentRepository.existsById(documentId)) {
-            throw new NotFoundException("document", documentId);
-        }
-        return eventRepository.findByDocument_IdOrderByOccurredAtDesc(documentId).stream()
-                .map(this::toAuditEntry)
-                .toList();
-    }
-
-    @Override
-    public ValidationResult validateOnly(MultipartFile file) {
-        byte[] xmlBytes;
-        try {
-            xmlBytes = file.getBytes();
-        } catch (IOException e) {
-            throw new BadRequestException("Не удалось прочитать файл: " + e.getMessage());
-        }
-        try {
-            xmlWellformedChecker.assertWellFormed(xmlBytes);
-        } catch (Exception e) {
-            return new ValidationResult(ValidationStatus.INVALID, List.of(
-                    new com.artwell.api.dto.ValidationMessage("ERROR", null, null, "XML не well-formed: " + e.getMessage(), null)
-            ));
-        }
-        var extracted = metadataExtractor.extract(xmlBytes, Optional.empty());
-        return xsdValidationService.validate(xmlBytes, extracted.documentType());
-    }
-
-    private com.artwell.api.dto.AuditEntry toAuditEntry(DocumentEventEntity e) {
-        return new com.artwell.api.dto.AuditEntry(
-                e.getId(),
-                e.getOccurredAt(),
-                e.getEventType(),
-                e.getUserId(),
-                e.getUserDisplayName(),
-                e.getDocument().getId(),
-                e.getDocument().getDocumentNumber(),
-                e.getDetails(),
-                e.getPayloadJson()
-        );
-    }
 }

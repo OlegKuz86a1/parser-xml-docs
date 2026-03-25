@@ -39,7 +39,7 @@ openapi-generator-cli generate \
 | Парсинг, ключевые поля | `DocumentDetail`, `extractedMetadata`, `Participant` |
 | Хранение файла + БД | Реализация сервиса; API отдаёт `documentId`, `versionId`, ссылки на скачивание |
 | Список, карточка, скачивание | `GET /documents`, `GET /documents/{id}`, `GET .../xml` |
-| Версии | `VersionUploadMode`, `GET /documents/{id}/versions`, версии XML |
+| Версии | `POST /documents/upload` (новая версия при том же номере), `GET /documents/{id}/versions`, версии XML |
 | История по документу (вместо глобального аудит-лога в UI) | `GET /documents/{documentId}/events`, `AuditEntry`, `AuditEventType` |
 | Роли подрядчик/заказчик | `UserRole`, `GET /users/me`, `403` при отсутствии прав |
 | Типы документов Минстроя | `DocumentTypeCode`, `GET /reference/document-types` |
